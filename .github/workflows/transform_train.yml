@@ -50,6 +50,10 @@ jobs:
           git fetch origin data --depth=1
           git worktree add data-branch origin/data
 
+      - name: Ensure MotherDuck database exists
+        if: steps.guard.outputs.run == 'true'
+        run: python transform/ensure_md_db.py
+
       - name: dbt build -> MotherDuck
         if: steps.guard.outputs.run == 'true'
         working-directory: transform

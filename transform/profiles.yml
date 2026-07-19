@@ -1,0 +1,21 @@
+# Self-contained profile (run dbt with `--profiles-dir .`). The MotherDuck token is
+# read from an env var, so this file is safe to commit.
+cincy_transit:
+  target: "{{ env_var('DBT_TARGET', 'local') }}"
+  outputs:
+    local:
+      type: duckdb
+      path: "{{ env_var('DBT_DUCKDB_PATH', 'warehouse.duckdb') }}"
+      threads: 4
+      extensions:
+        - httpfs
+        - parquet
+        - icu
+    motherduck:
+      type: duckdb
+      path: "md:cincy_transit"
+      threads: 4
+      extensions:
+        - icu
+      settings:
+        motherduck_token: "{{ env_var('MOTHERDUCK_TOKEN', '') }}"

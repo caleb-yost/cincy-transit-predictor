@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# dbt
+transform/target/
+transform/dbt_packages/
+transform/logs/
+transform/.user.yml
+logs/
+
+# raw data lives on the 'data' branch, not main
+data/
+
+# local warehouse + secrets
+*.duckdb
+.env
+.streamlit/secrets.toml
+profiles-local.yml
+
+# ml: commit model.pkl + metrics.json, ignore heavy intermediates
+ml/artifacts/*.parquet

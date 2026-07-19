@@ -1,0 +1,69 @@
+name: transform-train
+
+# Daily: rebuild dbt marts into the MotherDuck warehouse, retrain the model, commit artifacts.
+# No-ops cleanly until the MOTHERDUCK_TOKEN secret is configured.
+on:
+  schedule:
+    - cron: "40 9 * * *"  # 09:40 UTC daily, after overnight data has accrued
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: transform-train
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }}
+      DBT_TARGET: motherduck
+      DBT_DATA_DIR: ${{ github.workspace }}/data-branch/data
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Guard on MotherDuck secret
+        id: guard
+        run: |
+          if [ -z "$MOTHERDUCK_TOKEN" ]; then
+            echo "::notice::MOTHERDUCK_TOKEN not set — skipping until the cloud warehouse is configured."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.guard.outputs.run == 'true'
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install deps
+        if: steps.guard.outputs.run == 'true'
+        run: pip install -r requirements-transform.txt
+
+      - name: Fetch data-branch worktree
+        if: steps.guard.outputs.run == 'true'
+        run: |
+          git fetch origin data --depth=1
+          git worktree add data-branch origin/data
+
+      - name: dbt build -> MotherDuck
+        if: steps.guard.outputs.run == 'true'
+        working-directory: transform
+        run: dbt build --profiles-dir . --target motherduck
+
+      - name: Train + evaluate model
+        if: steps.guard.outputs.run == 'true'
+        run: python ml/train.py
+
+      - name: Commit model artifacts to main
+        if: steps.guard.outputs.run == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ml/artifacts/model.pkl ml/artifacts/metrics.json
+          git commit -m "retrain: $(date -u +%FT%TZ) [skip ci]" || { echo "no changes"; exit 0; }
+          git push origin HEAD:main

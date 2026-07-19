@@ -1,0 +1,36 @@
+version: 2
+
+models:
+  - name: fct_arrivals
+    description: "Snapshot-grain predicted arrivals with delay vs schedule."
+    columns:
+      - name: arrival_key
+        tests: [unique, not_null]
+      - name: trip_id
+        tests: [not_null]
+      - name: delay_seconds
+        tests: [not_null]
+
+  - name: mart_stop_delays
+    description: "One labeled row per scheduled stop-arrival (final prediction) + weather. ML source."
+    columns:
+      - name: stop_delay_key
+        tests: [unique, not_null]
+      - name: is_late
+        tests:
+          - accepted_values:
+              arguments:
+                values: [0, 1]
+
+  - name: mart_route_reliability
+    description: "Route x hour x day-of-week reliability aggregates."
+
+  - name: dim_route
+    columns:
+      - name: route_id
+        tests: [unique, not_null]
+
+  - name: dim_stop
+    columns:
+      - name: stop_id
+        tests: [unique, not_null]

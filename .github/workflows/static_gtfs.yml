@@ -1,0 +1,47 @@
+name: static-gtfs
+
+# Refresh the static GTFS schedule reference tables (SORTA updates ~quarterly).
+on:
+  schedule:
+    - cron: "17 8 * * 1"  # Mondays 08:17 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: static-gtfs
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements-ingest.txt
+
+      - name: Add data-branch worktree
+        run: |
+          git fetch origin data --depth=1
+          git worktree add data-branch origin/data
+
+      - name: Download + extract schedule
+        env:
+          DATA_DIR: data-branch/data
+          AGENCY: sorta
+        run: python ingestion/fetch_static_gtfs.py
+
+      - name: Commit + push reference tables
+        working-directory: data-branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/reference
+          git commit -m "static-gtfs refresh: $(date -u +%F) [skip ci]" || { echo "no changes"; exit 0; }
+          git push origin HEAD:data

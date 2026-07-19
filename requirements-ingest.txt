@@ -1,0 +1,5 @@
+# Slim deps for the 15-minute ingestion job (keeps the scheduled Action fast).
+requests>=2.31
+gtfs-realtime-bindings>=1.0.0
+pandas>=2.1
+pyarrow>=14.0

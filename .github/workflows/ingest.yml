@@ -1,0 +1,55 @@
+name: ingest
+
+# Poll the live GTFS-realtime + weather feeds and append a snapshot to the `data` branch.
+# Public repos get unlimited Actions minutes; cron granularity is 5 min (we use 15) and may
+# be delayed under load, which is fine for a rolling analytical dataset.
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ingest
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements-ingest.txt
+
+      - name: Add data-branch worktree
+        run: |
+          git fetch origin data --depth=1
+          git worktree add data-branch origin/data
+
+      - name: Fetch realtime snapshot
+        env:
+          DATA_DIR: data-branch/data
+          AGENCY: sorta
+        run: python ingestion/fetch_realtime.py
+
+      - name: Commit + push snapshot (prune >60 days)
+        working-directory: data-branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          cutoff=$(date -u -d '60 days ago' +%Y-%m-%d)
+          for d in data/raw/*/date=*; do
+            [ -d "$d" ] || continue
+            day="${d##*date=}"
+            if [[ "$day" < "$cutoff" ]]; then git rm -rqf "$d"; fi
+          done
+          git add data
+          git commit -m "ingest: $(date -u +%FT%TZ) [skip ci]" || { echo "no changes"; exit 0; }
+          git push origin HEAD:data

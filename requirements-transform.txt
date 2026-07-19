@@ -1,0 +1,5 @@
+# Full transform/ML environment: app runtime deps + dbt. Used by the transform-train
+# workflow, the Docker image, and local dbt runs. Streamlit Cloud uses the slim
+# requirements.txt (no dbt) so its build stays fast.
+-r requirements.txt
+dbt-duckdb>=1.9

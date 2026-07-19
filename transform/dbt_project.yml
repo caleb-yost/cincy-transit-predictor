@@ -1,0 +1,21 @@
+name: cincy_transit
+version: "0.1.0"
+config-version: 2
+profile: cincy_transit
+
+model-paths: ["models"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+vars:
+  # On-time window: not more than 1 min early, not more than 5 min late (transit-industry convention).
+  # The data-lake path is read directly from env var DBT_DATA_DIR in models/staging/_sources.yml.
+  on_time_early_secs: -60
+  on_time_late_secs: 300
+
+models:
+  cincy_transit:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: table

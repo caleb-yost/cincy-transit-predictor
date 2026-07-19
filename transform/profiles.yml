@@ -13,9 +13,8 @@ cincy_transit:
         - icu
     motherduck:
       type: duckdb
-      path: "md:cincy_transit"
+      # Token must be in the connection string (set at init) — MotherDuck rejects it as a post-connect SET.
+      path: "md:cincy_transit?motherduck_token={{ env_var('MOTHERDUCK_TOKEN', '') }}"
       threads: 4
       extensions:
         - icu
-      settings:
-        motherduck_token: "{{ env_var('MOTHERDUCK_TOKEN', '') }}"

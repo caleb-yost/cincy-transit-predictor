@@ -38,10 +38,6 @@ st.set_page_config(page_title="Cincinnati Transit", page_icon="🚌", layout="wi
 st.markdown(
     """
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-    html, body, [class*="st-"], [data-testid] {
-        font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
-    }
     #MainMenu, footer, header[data-testid="stHeader"] { display: none; }
     [data-testid="stMainBlockContainer"] { padding-top: 1.4rem; padding-bottom: 3rem; max-width: 1080px; }
     h1, h2, h3 { letter-spacing: -0.02em; }
@@ -148,6 +144,38 @@ view = view or "Map"
 
 
 # ---------------------------------------------------------------- map view
+def _render_route_detail(event) -> None:
+    """When a bus dot is clicked, show its route: on-time %, avg delay, and delay-by-hour."""
+    try:
+        objects = event.selection["objects"].get("buses", [])
+    except (AttributeError, KeyError, TypeError):
+        objects = []
+    if not objects:
+        return
+    rid = objects[0].get("route_id")
+    if rid is None:
+        return
+    safe = str(rid).replace("'", "''")
+    rel = query(f"select * from mart_route_reliability where route_id = '{safe}'")
+    with st.container(border=True):
+        short = rid
+        if not rel.empty and rel["route_short_name"].notna().any():
+            short = rel["route_short_name"].dropna().iloc[0]
+        st.markdown(f"#### Route {short}")
+        if rel.empty:
+            st.caption("No delay history for this route yet.")
+            return
+        weights = rel["n_arrivals"]
+        on_time = (rel["on_time_pct"] * weights).sum() / weights.sum()
+        avg_delay = (rel["avg_delay_minutes"] * weights).sum() / weights.sum()
+        a, b = st.columns(2)
+        a.metric("On-time", f"{on_time:.0f}%")
+        b.metric("Avg delay", f"{avg_delay:+.1f} min")
+        by_hour = rel.groupby("sched_hour")["avg_delay_minutes"].mean().round(2)
+        st.caption("Average delay by hour on this route")
+        st.bar_chart(by_hour, color="#007aff")
+
+
 def render_map() -> None:
     if vehicles.empty:
         st.info("No live buses right now (few run overnight), or the feed is briefly unreachable.")
@@ -156,15 +184,17 @@ def render_map() -> None:
         pts["route_label"] = pts["route_id"].fillna("?")
         layer = pdk.Layer(
             "ScatterplotLayer",
+            id="buses",
             data=pts,
             get_position=["longitude", "latitude"],
             get_fill_color=APPLE_BLUE,
             get_line_color=[255, 255, 255, 255],
             line_width_min_pixels=1.5,
             get_radius=90,
-            radius_min_pixels=4,
-            radius_max_pixels=11,
+            radius_min_pixels=5,
+            radius_max_pixels=12,
             pickable=True,
+            auto_highlight=True,
         )
         deck = pdk.Deck(
             layers=[layer],
@@ -172,8 +202,15 @@ def render_map() -> None:
             map_style=None,
             tooltip={"text": "Route {route_label}"},
         )
-        st.pydeck_chart(deck, use_container_width=True, height=520)
-        st.caption(f"{n_live} buses in service across {pts['route_id'].nunique()} routes.")
+        event = st.pydeck_chart(
+            deck,
+            width="stretch",
+            height=520,
+            on_select="rerun",
+            selection_mode="single-object",
+        )
+        st.caption(f"{n_live} buses in service across {pts['route_id'].nunique()} routes. Tap a bus for its route.")
+        _render_route_detail(event)
 
     rel = query("select * from mart_route_reliability")
     with st.expander("Route reliability", expanded=False):
@@ -190,7 +227,7 @@ def render_map() -> None:
             board["Avg delay (min)"] = (board["delay_w"] / board["arrivals"]).round(2)
             board = board.rename(columns={"route_short_name": "Route", "arrivals": "Arrivals"})
             board = board[["Route", "Arrivals", "On-time %", "Avg delay (min)"]].sort_values("On-time %")
-            st.dataframe(board, use_container_width=True, hide_index=True, height=320)
+            st.dataframe(board, width="stretch", hide_index=True, height=320)
 
     td = query("select sched_hour, delay_minutes, is_on_time from mart_stop_delays")
     with st.expander("Delay by time of day", expanded=False):
@@ -292,7 +329,7 @@ def render_predict() -> None:
             initial_view_state=pdk.ViewState(latitude=float(stop_lat), longitude=float(stop_lon), zoom=14),
             map_style=None,
         )
-        st.pydeck_chart(deck, use_container_width=True, height=240)
+        st.pydeck_chart(deck, width="stretch", height=240)
 
 
 if view == "Map":

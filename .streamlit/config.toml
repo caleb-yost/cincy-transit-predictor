@@ -4,6 +4,13 @@ toolbarMode = "minimal"
 
 [theme]
 base = "light"
+font = "Inter"
+
+[[theme.fontFaces]]
+family = "Inter"
+url = "https://rsms.me/inter/font-files/InterVariable.woff2?v=4.1"
+weight = "100 900"
+style = "normal"
 
 [theme.light]
 primaryColor = "#0071e3"

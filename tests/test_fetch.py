@@ -1,4 +1,4 @@
-"""Deterministic tests for GTFS-realtime parsing (no network — feed built in-memory)."""
+"""Deterministic tests for GTFS-realtime parsing (no network, feed built in-memory)."""
 
 from __future__ import annotations
 

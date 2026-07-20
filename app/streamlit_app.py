@@ -93,9 +93,9 @@ if not kpi.empty and kpi.iloc[0]["n"]:
     c3.metric("On-time rate", f"{row['on_time']:.0f}%")
     c4.metric("Avg delay", f"{row['avg_delay']:.1f} min")
 else:
-    c2.metric("Arrivals observed", "—")
-    c3.metric("On-time rate", "—")
-    c4.metric("Avg delay", "—")
+    c2.metric("Arrivals observed", "n/a")
+    c3.metric("On-time rate", "n/a")
+    c4.metric("Avg delay", "n/a")
 
 if metrics.get("is_smoke_model", True):
     st.warning(
@@ -126,7 +126,7 @@ with tab_rel:
     st.subheader("Route reliability")
     rel = query("select * from mart_route_reliability")
     if rel.empty:
-        st.info("Reliability marts are empty — they fill in as data accrues.")
+        st.info("Reliability marts are empty. They fill in as data accrues.")
     else:
         board = (
             rel.assign(on_time_w=rel["on_time_pct"] * rel["n_arrivals"], delay_w=rel["avg_delay_minutes"] * rel["n_arrivals"])
@@ -152,9 +152,9 @@ with tab_predict:
     model = load_model()
     routes = query("select distinct route_id, route_short_name, route_long_name from dim_route order by route_short_name")
     if model is None:
-        st.info("Model not trained yet — run `python ml/train.py` after some data has accrued.")
+        st.info("Model not trained yet. Run `python ml/train.py` after some data has accrued.")
     elif routes.empty:
-        st.info("Route dimension is empty — needs the schedule reference loaded.")
+        st.info("Route dimension is empty. Load the schedule reference first.")
     else:
         wx = live_weather()
         col1, col2, col3 = st.columns(3)
@@ -173,7 +173,7 @@ with tab_predict:
 
         m1, m2, m3 = st.columns(3)
         m1.metric("Predicted delay", f"{delay:+.1f} min")
-        m2.metric("Chance >5 min late", f"{late_p*100:.0f}%" if late_p is not None else "—")
+        m2.metric("Chance >5 min late", f"{late_p*100:.0f}%" if late_p is not None else "n/a")
         verdict = "🟢 Likely on time" if delay <= 5 else ("🟡 Running late" if delay <= 12 else "🔴 Very late")
         m3.metric("Verdict", verdict)
         if wx:
@@ -212,8 +212,8 @@ with tab_about:
 
         1. A GitHub Actions cron polls SORTA's GTFS-realtime feeds + Open-Meteo weather every 15 minutes,
            landing partitioned Parquet on a `data` branch.
-        2. **dbt** (DuckDB) models the raw snapshots into a labeled `mart_stop_delays` table — comparing each
-           *predicted* arrival to the *scheduled* one — and publishes to a **MotherDuck** cloud warehouse.
+        2. **dbt** (DuckDB) models the raw snapshots into a labeled `mart_stop_delays` table, comparing each
+           *predicted* arrival to the *scheduled* one, then publishes to a **MotherDuck** cloud warehouse.
         3. **scikit-learn** trains a gradient-boosting delay regressor + late-arrival classifier with a
            time-based holdout, retrained daily.
         4. This Streamlit app serves the live map, reliability, predictor, and trends.

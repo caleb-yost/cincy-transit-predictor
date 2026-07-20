@@ -13,12 +13,12 @@ METRICS_PATH = Path(__file__).resolve().parent / "artifacts" / "metrics.json"
 
 def main() -> None:
     if not METRICS_PATH.exists():
-        print("No metrics found — run `python ml/train.py` first.")
+        print("No metrics found. Run `python ml/train.py` first.")
         return
     metrics = json.loads(METRICS_PATH.read_text())
     print(json.dumps(metrics, indent=2))
     if metrics.get("is_smoke_model"):
-        print("\nNOTE: smoke model — accrue more data (a week of ingestion) for meaningful numbers.")
+        print("\nNOTE: smoke model. Accrue more data (a week of ingestion) for meaningful numbers.")
 
 
 if __name__ == "__main__":

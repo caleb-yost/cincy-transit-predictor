@@ -66,8 +66,8 @@ jobs:
       - name: Commit model artifacts to main
         if: steps.guard.outputs.run == 'true'
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "caleb-yost"
+          git config user.email "cfyost05@gmail.com"
           git add ml/artifacts/model.pkl ml/artifacts/metrics.json
           git commit -m "retrain: $(date -u +%FT%TZ) [skip ci]" || { echo "no changes"; exit 0; }
           git push origin HEAD:main

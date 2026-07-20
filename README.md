@@ -1,23 +1,26 @@
 # 🚌 Cincinnati Transit Delay Predictor
 
-An end-to-end data pipeline that ingests **live** Cincinnati Metro (SORTA) bus data every 15
-minutes, models it with dbt into a cloud warehouse, trains a machine-learning model to predict
-arrival delays, and serves it through a public dashboard — built entirely on free-tier services.
+A pipeline that pulls live Cincinnati Metro (SORTA) bus data every 15 minutes, models it into a
+warehouse, and trains a model to predict how late a bus will run. All of it runs on free-tier
+services.
 
 ![CI](https://github.com/caleb-yost/cincy-transit-predictor/actions/workflows/ci.yml/badge.svg)
 ![ingest](https://github.com/caleb-yost/cincy-transit-predictor/actions/workflows/ingest.yml/badge.svg)
 
-> **Status: early build, actively accruing data.** The pipeline runs continuously; the model is
-> retrained daily and its metrics become meaningful after ~a week of ingestion across busy hours.
+> Status: early build, still collecting data. The pipeline runs on its own and the model retrains
+> every day. The numbers start meaning something after about a week of collection, once there's data
+> from both rush hour and the quiet parts of the day.
 
----
+## Why I built it
 
-## Why this exists
+I wanted a project that behaves like a real data system instead of a notebook you run once. So the
+dataset isn't a file I downloaded. It's collected live from the city's buses, one snapshot every
+fifteen minutes, and it keeps growing whether or not I'm watching. That shifts the whole problem.
+You have to think about scheduling the pulls, storing them, handling a feed that changes shape on
+you, and deciding what happens when the feed goes quiet at two in the morning.
 
-Most student data projects train a model on a static Kaggle CSV. This one generates its **own**
-dataset from a continuously-updating public feed — which is what real data engineering actually is.
-The data can't be copy-pasted from a tutorial; it accumulates snapshot by snapshot from Cincinnati's
-buses.
+The Cincinnati angle is on purpose. If someone here opens this, the routes are ones they actually
+ride to work.
 
 ## Architecture
 
@@ -35,43 +38,46 @@ flowchart LR
 
 | Layer | Tool | Free tier |
 |-------|------|-----------|
-| Orchestration | **GitHub Actions** (cron) | Unlimited minutes on public repos |
-| Raw storage | **Partitioned Parquet** (`data` branch) | Free |
-| Transform | **dbt Core + DuckDB** | Open source |
-| Cloud warehouse | **MotherDuck** | 10 GB / 10 compute-hrs per month |
-| ML | **scikit-learn** | Open source |
-| Dashboard | **Streamlit Community Cloud** | Free |
-| CI / container | **GitHub Actions + Docker** | Free |
+| Orchestration | GitHub Actions (cron) | Unlimited minutes on public repos |
+| Raw storage | Partitioned Parquet (`data` branch) | Free |
+| Transform | dbt Core + DuckDB | Open source |
+| Cloud warehouse | MotherDuck | 10 GB, 10 compute-hours per month |
+| ML | scikit-learn | Open source |
+| Dashboard | Streamlit Community Cloud | Free |
+| CI, container | GitHub Actions, Docker | Free |
 
 ## Data sources (no API keys)
 
-- [SORTA / Cincinnati Metro developer feeds](https://www.go-metro.com/about/developer-data/) — static
-  GTFS schedule + GTFS-realtime vehicle positions, trip updates, alerts.
-- [Open-Meteo](https://open-meteo.com/) — current weather, used as a model feature (rain/snow drives lateness).
+- [SORTA / Cincinnati Metro developer feeds](https://www.go-metro.com/about/developer-data/): the
+  static GTFS schedule plus realtime vehicle positions, trip updates, and alerts.
+- [Open-Meteo](https://open-meteo.com/): current weather, fed to the model as a feature since rain
+  and snow tend to push buses off schedule.
 
-The schedule alone is ~432k `stop_times` rows; each realtime snapshot adds a few thousand predicted
-arrivals. **MBTA** (Boston) is wired as a drop-in fallback (identical GTFS-realtime format) since
-SORTA's feed is provided "as is" with no uptime guarantee — set `AGENCY=mbta` to switch.
+The schedule alone is about 432,000 `stop_times` rows, and every realtime snapshot adds a few
+thousand predicted arrivals. Boston's MBTA is wired up as a fallback because it publishes the same
+GTFS-realtime format, so a demo won't break if SORTA's feed goes down (it comes with no uptime
+promise). Set `AGENCY=mbta` to switch.
 
-## Engineering notes (things the live feed taught me)
+## Notes from working with a live feed
 
-- **WAF blocks default clients.** SORTA's realtime endpoints 403 the `python-requests` User-Agent;
-  requests present a browser UA (`ingestion/feeds.py`).
-- **`departure.time`, not `arrival.time`.** SORTA populates predicted *departure* on ~98% of stop
-  updates and *arrival* on ~1%, so delay uses `coalesce(arrival, departure)`.
-- **Non-standard after-midnight service dates.** SORTA reports the physical calendar date in the
-  realtime `start_date` while the schedule still encodes those stops with `>24:00:00` clock times,
-  which naively double-counts the day rollover (a flat +24h error). The fix anchors the schedule's
-  clock-time-of-day to whichever calendar day lands closest to the observed prediction — a bus is
-  never more than a few hours off schedule, so the nearest occurrence is unambiguous
-  (`transform/models/marts/fct_arrivals.sql`).
-- **Time-based validation.** The model trains on earlier arrivals and tests on later ones (never a
-  random split) to avoid leakage, with a random-split fallback until the data spans enough time.
+A few things only turned up once real data started moving:
+
+- SORTA's realtime endpoints hand back a 403 to the default Python request. They want a browser
+  User-Agent, so every request sends one.
+- The feed fills in predicted *departure* times far more often than *arrival* times, roughly 98
+  percent against 1 percent, so the delay math takes whichever one is there.
+- The realtime `start_date` and the schedule disagree about trips that run past midnight. SORTA
+  reports the calendar date while the schedule still uses clock times above 24:00, and stacking the
+  two adds a flat 24 hours. The fix anchors the scheduled time to whichever calendar day sits closest
+  to the observed prediction. A bus is never off by more than a couple hours, so the closest one is
+  always the right one.
+- Training uses a time-based split, older data to train and newer data to test, so the model can't
+  peek at the future.
 
 ## Repo layout
 
 ```
-ingestion/     fetch realtime feeds + weather → Parquet, and the static schedule
+ingestion/     pull the realtime feeds + weather to Parquet, and the static schedule
 transform/     dbt-duckdb project (staging → marts); fct_arrivals is the labeled delay table
 ml/            build_features / train / evaluate → model.pkl + metrics.json
 app/           Streamlit dashboard (live map, reliability, predictor, trends)
@@ -91,31 +97,33 @@ python ml/train.py                                    # train + write metrics
 streamlit run app/streamlit_app.py                    # dashboard at localhost:8501
 ```
 
-Tests + lint: `ruff check . && pytest -q`.
+Tests and lint: `ruff check . && pytest -q`.
 
 ## Deployment
 
-1. **Ingestion** runs automatically once the repo is public (GitHub Actions, unlimited minutes).
-2. **MotherDuck**: create a free account, add the token as a repo secret `MOTHERDUCK_TOKEN`. The daily
-   `transform-train` workflow then builds marts into the warehouse and retrains the model.
-3. **Streamlit Community Cloud**: deploy `app/streamlit_app.py`, add `MOTHERDUCK_TOKEN` to the app
-   secrets. The live map streams straight from the feed; everything else reads the warehouse.
+1. Ingestion starts on its own once the repo is public (GitHub Actions).
+2. MotherDuck: make a free account and add the token as a repo secret named `MOTHERDUCK_TOKEN`. The
+   daily transform-train job then builds the marts into the warehouse and retrains the model.
+3. Streamlit Community Cloud: deploy `app/streamlit_app.py` and add `MOTHERDUCK_TOKEN` to the app
+   secrets. The live map streams straight from the feed, and the rest reads the warehouse.
 
 ## Current metrics
 
-Live values are written to [`ml/artifacts/metrics.json`](ml/artifacts/metrics.json) on every retrain
-(delay MAE / RMSE / R², late-arrival ROC-AUC / precision / recall, all on a temporal holdout, plus an
-`is_smoke_model` flag that stays `true` until the data has real temporal spread).
+The live values land in [`ml/artifacts/metrics.json`](ml/artifacts/metrics.json) on every retrain:
+delay MAE, RMSE, and R2 for the regressor, and ROC-AUC with precision and recall for the
+late-arrival classifier, all on a time-based holdout. There's an `is_smoke_model` flag that stays
+true until the data covers enough hours and days to trust.
 
-## What this demonstrates
+## What it covers
 
-Data ingestion from a live protobuf feed · pipeline orchestration · Parquet/partitioning · dbt data
-modeling · a cloud data warehouse · feature engineering · gradient-boosting models with proper
-temporal validation · an interactive dashboard · Docker + CI. Handling a genuinely messy real-world
-feed (WAF, non-standard service dates, sparse fields) is the point, not an afterthought.
+The stack runs through most of a real data workflow: reading a live protobuf feed, scheduling the
+reads, landing partitioned Parquet, modeling with dbt into a cloud warehouse, building features,
+training and checking a gradient-boosting model with a time-based split, and serving it through a
+dashboard. It's containerized and has CI on every PR. The part I'm most glad I pushed through is the
+messy edges of the feed, since that's where most of the real work turned out to be.
 
 ---
 
-*Transit data © SORTA/Cincinnati Metro, used under their developer terms. Weather by Open-Meteo.*
+*Transit data © SORTA / Cincinnati Metro, used under their developer terms. Weather by Open-Meteo.*
 
 *Built by Caleb Yost, in conjunction with Claude Opus 4.8.*

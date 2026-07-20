@@ -80,10 +80,10 @@ def main() -> None:
     n_hours = int(df["sched_hour"].nunique())
     print(f"labeled rows: {n}  |  service days: {n_days}  |  distinct hours: {n_hours}")
 
-    # "meaningful" needs temporal spread, not just row count — one busy hour is still a smoke model.
+    # "meaningful" needs temporal spread, not just row count. One busy hour is still a smoke model.
     smoke = n < MIN_ROWS or n_days < 2 or n_hours < 6
     if smoke:
-        print("[warn] limited temporal coverage — SMOKE model; metrics not yet meaningful.")
+        print("[warn] limited temporal coverage; SMOKE model, metrics not yet meaningful.")
 
     train_df, test_df = time_split(df)
     split = "time-based"
@@ -133,7 +133,7 @@ def main() -> None:
             "late_rate": round(float(df[CLF_TARGET].mean()), 3),
         }
     else:
-        metrics["classification"] = {"note": "only one class present so far — classifier skipped."}
+        metrics["classification"] = {"note": "only one class present so far, classifier skipped."}
 
     joblib.dump(
         {

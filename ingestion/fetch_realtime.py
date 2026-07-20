@@ -110,7 +110,7 @@ def fetch_vehicle_positions(url: str, snapshot_ts: int) -> pd.DataFrame:
 
 
 def fetch_weather(lat: float, lon: float, snapshot_ts: int) -> pd.DataFrame:
-    """Current conditions from Open-Meteo (free, no API key) — second data source / model feature."""
+    """Current conditions from Open-Meteo (free, no API key). Second data source and model feature."""
     params = {
         "latitude": lat,
         "longitude": lon,
@@ -162,7 +162,7 @@ def main() -> None:
     _write(weather, "weather", now)
 
     if trip_updates.empty and vehicles.empty:
-        raise SystemExit("No realtime data returned — feeds may be down.")
+        raise SystemExit("No realtime data returned; feeds may be down.")
     print("snapshot complete.")
 
 

@@ -19,9 +19,6 @@ fifteen minutes, and it keeps growing whether or not I'm watching. That shifts t
 You have to think about scheduling the pulls, storing them, handling a feed that changes shape on
 you, and deciding what happens when the feed goes quiet at two in the morning.
 
-The Cincinnati angle is on purpose. If someone here opens this, the routes are ones they actually
-ride to work.
-
 ## Architecture
 
 ```mermaid

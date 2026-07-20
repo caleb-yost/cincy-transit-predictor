@@ -33,11 +33,16 @@ jobs:
           git fetch origin data --depth=1
           git worktree add data-branch origin/data
 
-      - name: Fetch realtime snapshot
+      - name: Fetch realtime snapshots (several per run to beat cron throttling)
         env:
           DATA_DIR: data-branch/data
           AGENCY: sorta
-        run: python ingestion/fetch_realtime.py
+        run: |
+          for i in 1 2 3 4; do
+            echo "--- snapshot $i/4 ---"
+            python ingestion/fetch_realtime.py || echo "snapshot $i failed, continuing"
+            [ "$i" -lt 4 ] && sleep 870 || true
+          done
 
       - name: Commit + push snapshot (prune >60 days)
         working-directory: data-branch

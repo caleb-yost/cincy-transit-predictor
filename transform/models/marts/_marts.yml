@@ -34,3 +34,9 @@ models:
     columns:
       - name: stop_id
         tests: [unique, not_null]
+
+  - name: dim_route_stops
+    description: "Distinct stops per route with representative order + coordinates (predictor dropdown)."
+    columns:
+      - name: route_stop_key
+        tests: [unique, not_null]

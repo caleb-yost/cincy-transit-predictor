@@ -1,21 +1,21 @@
 {
-  "trained_at": "2026-07-20T12:03:47.916577+00:00",
-  "n_rows": 72478,
-  "n_service_days": 2,
-  "n_distinct_hours": 18,
+  "trained_at": "2026-07-21T11:28:32.481055+00:00",
+  "n_rows": 226673,
+  "n_service_days": 3,
+  "n_distinct_hours": 24,
   "split": "time-based",
   "is_smoke_model": false,
   "regression": {
-    "mae_minutes": 2.148,
-    "rmse_minutes": 2.913,
-    "r2": -0.473,
-    "baseline_mae_minutes": 2.479
+    "mae_minutes": 4.656,
+    "rmse_minutes": 6.692,
+    "r2": -1.772,
+    "baseline_mae_minutes": 2.637
   },
   "classification": {
-    "roc_auc": 0.738,
-    "accuracy": 0.906,
-    "precision": 0.109,
-    "recall": 0.171,
-    "late_rate": 0.12
+    "roc_auc": 0.636,
+    "accuracy": 0.837,
+    "precision": 0.251,
+    "recall": 0.303,
+    "late_rate": 0.138
   }
 }

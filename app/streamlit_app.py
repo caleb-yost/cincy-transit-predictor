@@ -16,6 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+import altair as alt  # noqa: E402
 import joblib  # noqa: E402
 import pandas as pd  # noqa: E402
 import pydeck as pdk  # noqa: E402
@@ -30,6 +31,36 @@ MODEL_PATH = ROOT / "ml" / "artifacts" / "model.pkl"
 METRICS_PATH = ROOT / "ml" / "artifacts" / "metrics.json"
 DOW = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
 HOURS = [f"{(h % 12) or 12} {'AM' if h < 12 else 'PM'}" for h in range(24)]
+
+# Vega expression that turns an hour integer (0-23) into a compact clock label (12a, 6a, 12p, 6p).
+_HOUR_AXIS = (
+    "datum.value == 0 ? '12a' : datum.value < 12 ? datum.value + 'a'"
+    " : datum.value == 12 ? '12p' : (datum.value - 12) + 'p'"
+)
+
+
+def hour_bar(frame, hour_col, value_col, y_title, color, decimals=1):
+    """A readable hour-of-day bar chart: clock-style axis, sparse ticks, plain-language tooltip."""
+    data = frame[[hour_col, value_col]].copy()
+    data.columns = ["hour", "value"]
+    data["Time"] = data["hour"].map(lambda h: HOURS[int(h)])
+    return (
+        alt.Chart(data)
+        .mark_bar(color=color, cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
+        .encode(
+            x=alt.X(
+                "hour:O",
+                title=None,
+                axis=alt.Axis(values=[0, 3, 6, 9, 12, 15, 18, 21], labelExpr=_HOUR_AXIS, labelAngle=0),
+            ),
+            y=alt.Y("value:Q", title=y_title),
+            tooltip=[
+                alt.Tooltip("Time:N"),
+                alt.Tooltip("value:Q", title=y_title, format=f".{decimals}f"),
+            ],
+        )
+        .properties(height=220, width="container")
+    )
 CINCY_LAT, CINCY_LON = 39.1031, -84.5120
 APPLE_BLUE = [0, 122, 255, 230]
 
@@ -171,9 +202,9 @@ def _render_route_detail(event) -> None:
         a, b = st.columns(2)
         a.metric("On-time", f"{on_time:.0f}%")
         b.metric("Avg delay", f"{avg_delay:+.1f} min")
-        by_hour = rel.groupby("sched_hour")["avg_delay_minutes"].mean().round(2)
-        st.caption("Average delay by hour on this route")
-        st.bar_chart(by_hour, color="#007aff")
+        by_hour = rel.groupby("sched_hour")["avg_delay_minutes"].mean().round(2).reset_index()
+        st.caption("Average delay by time of day on this route")
+        st.altair_chart(hour_bar(by_hour, "sched_hour", "avg_delay_minutes", "Minutes late", "#007aff"))
 
 
 def render_map() -> None:
@@ -241,11 +272,10 @@ def render_map() -> None:
             )
             by_hour["Avg delay (min)"] = by_hour["avg_delay"].round(2)
             by_hour["On-time %"] = (by_hour["on_time"] * 100).round(1)
-            left, right = st.columns(2)
-            left.caption("Average delay by hour")
-            left.bar_chart(by_hour.set_index("sched_hour")["Avg delay (min)"], color="#007aff")
-            right.caption("On-time % by hour")
-            right.bar_chart(by_hour.set_index("sched_hour")["On-time %"], color="#34c759")
+            st.caption("Average delay by time of day")
+            st.altair_chart(hour_bar(by_hour, "sched_hour", "Avg delay (min)", "Minutes late", "#007aff"))
+            st.caption("On-time rate by time of day")
+            st.altair_chart(hour_bar(by_hour, "sched_hour", "On-time %", "% on time", "#34c759", decimals=0))
 
 
 # ---------------------------------------------------------------- predict view

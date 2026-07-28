@@ -118,6 +118,19 @@ def query(sql: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+@st.cache_data(ttl=120, show_spinner=False)
+def route_recent_delay(route_id: str) -> float:
+    """Live nowcast: how late this route has run in the last 90 min. 0.0 if no recent data."""
+    safe = str(route_id).replace("'", "''")
+    row = query(
+        "select avg(delay_minutes) as avg_delay from mart_stop_delays "
+        f"where route_id = '{safe}' and predicted_at >= now() - interval 90 minutes"
+    )
+    if row.empty or pd.isna(row.iloc[0]["avg_delay"]):
+        return 0.0
+    return float(row.iloc[0]["avg_delay"])
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def stops_for_route(route_id: str) -> pd.DataFrame:
     safe = str(route_id).replace("'", "''")
@@ -313,7 +326,13 @@ def render_predict() -> None:
         hour_label = c4.selectbox("Time", HOURS, index=datetime.now().hour)
         hour = HOURS.index(hour_label)
 
-        feat = make_feature_row(route_id, hour, DOW.index(day), stop_seq, live_weather())
+        # The recent-delay nowcast only reflects reality if the question is about "now" (today,
+        # within an hour); for a different day/hour it'd just be misleading, so fall back to 0.
+        now = datetime.now()
+        asking_about_now = day == DOW[(now.weekday() + 1) % 7] and abs(hour - now.hour) <= 1
+        recent_delay = route_recent_delay(route_id) if asking_about_now else 0.0
+
+        feat = make_feature_row(route_id, hour, DOW.index(day), stop_seq, live_weather(), recent_delay)
         delay = float(model["regressor"].predict(feat)[0])
         late_p = None
         if model.get("classifier") is not None:

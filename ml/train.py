@@ -1,7 +1,11 @@
 """Train the delay regressor + late-arrival classifier on mart_stop_delays.
 
-Uses a TIME-BASED holdout (train on earlier arrivals, test on later) to avoid leakage, with a
-random-split fallback while the dataset still spans too little time. Writes model.pkl + metrics.json.
+Evaluates with rolling-origin (walk-forward) time-series cross-validation once enough distinct
+service days exist: each fold trains on every day strictly before a held-out test day, so no fold
+ever sees its own future. Metrics are pooled across folds rather than averaged, since R^2 isn't
+meaningfully averageable per-fold. Falls back to a single time-based holdout (or a random split)
+while the dataset still spans too few days for that. The shipped model is refit on ALL data;
+only the reported metrics come from the held-out folds.
 
 Run: ``python ml/train.py`` (or ``python -m ml.train``).
 """
@@ -55,6 +59,8 @@ ARTIFACT_DIR = Path(__file__).resolve().parent / "artifacts"
 MODEL_PATH = ARTIFACT_DIR / "model.pkl"
 METRICS_PATH = ARTIFACT_DIR / "metrics.json"
 MIN_ROWS = 50
+MIN_TRAIN_DAYS = 3  # a fold's training window must span at least this many days before its test day
+MAX_FOLDS = 5  # cap walk-forward folds so runtime stays flat as months of data accrue
 
 
 def build_pipeline(estimator) -> Pipeline:
@@ -71,6 +77,14 @@ def time_split(df, frac: float = 0.8):
     return df.iloc[:k], df.iloc[k:]
 
 
+def walk_forward_days(df):
+    """Yield (train_df, test_df) per fold: train on every day strictly before the held-out day."""
+    days = sorted(df["start_date"].unique())
+    test_days = days[MIN_TRAIN_DAYS:][-MAX_FOLDS:]
+    for test_day in test_days:
+        yield df[df["start_date"] < test_day], df[df["start_date"] == test_day], test_day
+
+
 def main() -> None:
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
     con = warehouse.connect()
@@ -85,55 +99,96 @@ def main() -> None:
     if smoke:
         print("[warn] limited temporal coverage; SMOKE model, metrics not yet meaningful.")
 
-    train_df, test_df = time_split(df)
-    split = "time-based"
-    if test_df["scheduled_at"].nunique() < 3 or len(test_df) < 10:
-        from sklearn.model_selection import train_test_split
+    folds = [] if smoke else list(walk_forward_days(df))
 
-        train_df, test_df = train_test_split(df, test_size=0.2, random_state=42)
-        split = "random (insufficient time span for a temporal split)"
-    print(f"split: {split}  |  train={len(train_df)} test={len(test_df)}")
+    reg_true, reg_pred, reg_baseline_pred = [], [], []
+    clf_true, clf_proba = [], []
+    fold_log = []
 
-    x_tr, x_te = train_df[FEATURES], test_df[FEATURES]
+    if len(folds) >= 2:
+        split = f"rolling-origin walk-forward CV ({len(folds)} folds, pooled)"
+        for train_df, test_df, test_day in folds:
+            x_tr, x_te = train_df[FEATURES], test_df[FEATURES]
 
-    # ---- regression: delay in minutes ----
-    reg = build_pipeline(HistGradientBoostingRegressor(max_iter=300, learning_rate=0.06))
-    reg.fit(x_tr, train_df[REG_TARGET])
-    pred = reg.predict(x_te)
+            reg = build_pipeline(HistGradientBoostingRegressor(max_iter=300, learning_rate=0.06))
+            reg.fit(x_tr, train_df[REG_TARGET])
+            reg_true.extend(test_df[REG_TARGET].tolist())
+            reg_pred.extend(reg.predict(x_te).tolist())
+            reg_baseline_pred.extend([train_df[REG_TARGET].mean()] * len(test_df))
+
+            if train_df[CLF_TARGET].nunique() > 1 and test_df[CLF_TARGET].nunique() > 1:
+                clf = build_pipeline(HistGradientBoostingClassifier(max_iter=300, learning_rate=0.06))
+                clf.fit(x_tr, train_df[CLF_TARGET])
+                clf_true.extend(test_df[CLF_TARGET].tolist())
+                clf_proba.extend(clf.predict_proba(x_te)[:, 1].tolist())
+
+            fold_log.append({"test_day": str(test_day), "train_rows": len(train_df), "test_rows": len(test_df)})
+        print(f"split: {split}")
+        for f in fold_log:
+            print(f"  fold test_day={f['test_day']}  train={f['train_rows']}  test={f['test_rows']}")
+    else:
+        # Not enough distinct days yet for walk-forward CV; fall back to a single holdout.
+        train_df, test_df = time_split(df)
+        split = "time-based (insufficient days for walk-forward CV)"
+        if test_df["scheduled_at"].nunique() < 3 or len(test_df) < 10:
+            from sklearn.model_selection import train_test_split
+
+            train_df, test_df = train_test_split(df, test_size=0.2, random_state=42)
+            split = "random (insufficient time span for a temporal split)"
+        print(f"split: {split}  |  train={len(train_df)} test={len(test_df)}")
+
+        x_tr, x_te = train_df[FEATURES], test_df[FEATURES]
+        reg = build_pipeline(HistGradientBoostingRegressor(max_iter=300, learning_rate=0.06))
+        reg.fit(x_tr, train_df[REG_TARGET])
+        reg_true = test_df[REG_TARGET].tolist()
+        reg_pred = reg.predict(x_te).tolist()
+        reg_baseline_pred = [train_df[REG_TARGET].mean()] * len(test_df)
+
+        if train_df[CLF_TARGET].nunique() > 1 and test_df[CLF_TARGET].nunique() > 1:
+            clf = build_pipeline(HistGradientBoostingClassifier(max_iter=300, learning_rate=0.06))
+            clf.fit(x_tr, train_df[CLF_TARGET])
+            clf_true = test_df[CLF_TARGET].tolist()
+            clf_proba = clf.predict_proba(x_te)[:, 1].tolist()
+
     metrics = {
         "trained_at": datetime.now(UTC).isoformat(),
         "n_rows": int(n),
         "n_service_days": n_days,
         "n_distinct_hours": n_hours,
         "split": split,
+        "n_folds": len(folds),
+        "fold_log": fold_log,
         "is_smoke_model": bool(smoke),
         "regression": {
-            "mae_minutes": round(float(mean_absolute_error(test_df[REG_TARGET], pred)), 3),
-            "rmse_minutes": round(float(np.sqrt(mean_squared_error(test_df[REG_TARGET], pred))), 3),
-            "r2": round(float(r2_score(test_df[REG_TARGET], pred)), 3),
-            "baseline_mae_minutes": round(
-                float(mean_absolute_error(test_df[REG_TARGET], np.full(len(test_df), train_df[REG_TARGET].mean()))),
-                3,
-            ),
+            "mae_minutes": round(float(mean_absolute_error(reg_true, reg_pred)), 3),
+            "rmse_minutes": round(float(np.sqrt(mean_squared_error(reg_true, reg_pred))), 3),
+            "r2": round(float(r2_score(reg_true, reg_pred)), 3),
+            "baseline_mae_minutes": round(float(mean_absolute_error(reg_true, reg_baseline_pred)), 3),
         },
     }
 
-    # ---- classification: is the bus >5 min late ----
-    clf = None
-    if train_df[CLF_TARGET].nunique() > 1 and test_df[CLF_TARGET].nunique() > 1:
-        clf = build_pipeline(HistGradientBoostingClassifier(max_iter=300, learning_rate=0.06))
-        clf.fit(x_tr, train_df[CLF_TARGET])
-        proba = clf.predict_proba(x_te)[:, 1]
-        preds = (proba >= 0.5).astype(int)
+    # ---- classification: is the bus >5 min late (pooled across folds where both classes present) ----
+    if clf_true and len(set(clf_true)) > 1:
+        clf_preds = [1 if p >= 0.5 else 0 for p in clf_proba]
         metrics["classification"] = {
-            "roc_auc": round(float(roc_auc_score(test_df[CLF_TARGET], proba)), 3),
-            "accuracy": round(float(accuracy_score(test_df[CLF_TARGET], preds)), 3),
-            "precision": round(float(precision_score(test_df[CLF_TARGET], preds, zero_division=0)), 3),
-            "recall": round(float(recall_score(test_df[CLF_TARGET], preds, zero_division=0)), 3),
+            "roc_auc": round(float(roc_auc_score(clf_true, clf_proba)), 3),
+            "accuracy": round(float(accuracy_score(clf_true, clf_preds)), 3),
+            "precision": round(float(precision_score(clf_true, clf_preds, zero_division=0)), 3),
+            "recall": round(float(recall_score(clf_true, clf_preds, zero_division=0)), 3),
             "late_rate": round(float(df[CLF_TARGET].mean()), 3),
         }
     else:
         metrics["classification"] = {"note": "only one class present so far, classifier skipped."}
+
+    # Reported metrics come from held-out folds above; the SHIPPED model is refit on every row
+    # collected so far, since there's no reason to throw away data once it's no longer being tested.
+    x_all = df[FEATURES]
+    reg = build_pipeline(HistGradientBoostingRegressor(max_iter=300, learning_rate=0.06))
+    reg.fit(x_all, df[REG_TARGET])
+    clf = None
+    if df[CLF_TARGET].nunique() > 1:
+        clf = build_pipeline(HistGradientBoostingClassifier(max_iter=300, learning_rate=0.06))
+        clf.fit(x_all, df[CLF_TARGET])
 
     joblib.dump(
         {

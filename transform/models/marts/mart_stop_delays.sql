@@ -13,6 +13,19 @@ with ranked as (
 final_pred as (
     select * from ranked where rn = 1
 ),
+-- "Is this route running behind right now" is a much stronger signal than hour-of-day alone
+-- (delay is heavily autocorrelated: a route stuck in traffic at 8:14 is still stuck at 8:17).
+-- Window strictly BEFORE predicted_at (1 min buffer) so this can never see its own row's outcome.
+windowed as (
+    select
+        *,
+        avg(delay_minutes) over (
+            partition by route_id
+            order by predicted_at
+            range between interval 90 minutes preceding and interval 1 minute preceding
+        ) as route_recent_avg_delay_raw
+    from final_pred
+),
 wx as (
     select
         snapshot_ts,
@@ -49,6 +62,7 @@ select
     wx.precipitation_in,
     wx.snowfall_in,
     wx.wind_speed_mph,
-    wx.weather_code
-from final_pred fp
+    wx.weather_code,
+    coalesce(round(fp.route_recent_avg_delay_raw, 2), 0.0) as route_recent_avg_delay
+from windowed fp
 left join wx on fp.snapshot_ts = wx.snapshot_ts

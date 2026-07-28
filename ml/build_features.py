@@ -17,6 +17,7 @@ NUMERIC = [
     "precipitation_in",
     "snowfall_in",
     "wind_speed_mph",
+    "route_recent_avg_delay",
 ]
 FEATURES = CATEGORICAL + NUMERIC
 REG_TARGET = "delay_minutes"
@@ -51,6 +52,11 @@ def prepare(df: pd.DataFrame) -> pd.DataFrame:
     df["sched_dow"] = pd.to_numeric(df["sched_dow"], errors="coerce").fillna(0).astype(int)
     df["stop_sequence"] = pd.to_numeric(df["stop_sequence"], errors="coerce").fillna(0).astype(int)
     df["route_id"] = df["route_id"].astype(str)
+    if "route_recent_avg_delay" in df.columns:
+        df["route_recent_avg_delay"] = pd.to_numeric(df["route_recent_avg_delay"], errors="coerce").fillna(0.0)
+    else:
+        # Column won't exist until the warehouse mart is rebuilt with it; neutral default until then.
+        df["route_recent_avg_delay"] = 0.0
 
     df[REG_TARGET] = pd.to_numeric(df[REG_TARGET], errors="coerce")
     df = df.dropna(subset=[REG_TARGET])
@@ -65,8 +71,14 @@ def make_feature_row(
     sched_dow: int,
     stop_sequence: int,
     weather: dict | None = None,
+    route_recent_avg_delay: float = 0.0,
 ) -> pd.DataFrame:
-    """Build a single-row feature frame for on-demand prediction in the app."""
+    """Build a single-row feature frame for on-demand prediction in the app.
+
+    ``route_recent_avg_delay`` is a nowcast signal (how late this route has been running in the
+    last ~90 min) and is only meaningful for near-term predictions; callers asking about a
+    different day/hour than right now should leave it at the neutral default of 0.0.
+    """
     weather = {**WEATHER_DEFAULTS, **(weather or {})}
     row = {
         "route_id": str(route_id),
@@ -78,5 +90,6 @@ def make_feature_row(
         "precipitation_in": weather["precipitation_in"],
         "snowfall_in": weather["snowfall_in"],
         "wind_speed_mph": weather["wind_speed_mph"],
+        "route_recent_avg_delay": float(route_recent_avg_delay),
     }
     return pd.DataFrame([row])[FEATURES]

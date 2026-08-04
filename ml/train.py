@@ -90,6 +90,13 @@ def main() -> None:
     con = warehouse.connect()
     df = prepare(load_labeled_frame(con))
     n = len(df)
+    if n == 0:
+        raise RuntimeError(
+            "mart_stop_delays returned 0 labeled rows. This almost always means the realtime "
+            "-> schedule join in fct_arrivals is producing no matches (e.g. a stale/mismatched "
+            "static GTFS schedule), not a training bug. Check trip_id overlap between "
+            "stg_trip_updates and stg_stop_times before touching this script."
+        )
     n_days = int(df["start_date"].nunique()) if "start_date" in df.columns else 1
     n_hours = int(df["sched_hour"].nunique())
     print(f"labeled rows: {n}  |  service days: {n_days}  |  distinct hours: {n_hours}")

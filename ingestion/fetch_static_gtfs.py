@@ -3,6 +3,14 @@
 These reference tables (the *scheduled* times) are joined against the realtime
 *predicted* arrivals to compute delay. Run weekly (schedule changes ~quarterly).
 
+Transit agencies commonly publish next season's GTFS zip days or weeks before it takes
+effect (SORTA does this too, e.g. shipping a schedule with every calendar.txt window
+starting mid-month while the current season is still running). Blindly overwriting our
+reference tables with that not-yet-effective schedule breaks the realtime<->schedule join
+completely (trip_ids don't overlap at all), so before committing a refresh we check that
+the new schedule's trip_ids actually appear in the vehicles currently on the road. If they
+don't, we skip the write and keep the schedule that's actually in effect.
+
 Run: ``python ingestion/fetch_static_gtfs.py`` (or ``python -m ingestion.fetch_static_gtfs``).
 Writes reference/<table>.parquet under ``DATA_DIR``.
 """
@@ -33,6 +41,33 @@ WANTED = {
     "calendar_dates.txt": "calendar_dates",
 }
 REQUEST_TIMEOUT = 120
+MIN_OVERLAP_FRACTION = 0.05  # if fewer than 5% of recently-seen realtime trip_ids are in the
+# new schedule, treat it as not-yet-effective rather than as a broken/changed feed.
+RECENT_SNAPSHOTS_TO_SAMPLE = 12
+
+
+def recent_realtime_trip_ids() -> set[str]:
+    """Sample trip_ids from the most recent realtime snapshots already on disk.
+
+    Returns an empty set if there's no realtime history yet (e.g. first-ever run), in which
+    case the caller has nothing to validate against and should just accept the new schedule.
+    """
+    raw_dir = Path(DATA_DIR) / "raw" / "trip_updates"
+    if not raw_dir.exists():
+        return set()
+    date_dirs = sorted(raw_dir.glob("date=*"))
+    if not date_dirs:
+        return set()
+    files = sorted(date_dirs[-1].glob("*.parquet"))[-RECENT_SNAPSHOTS_TO_SAMPLE:]
+    if not files:
+        return set()
+    ids: set[str] = set()
+    for f in files:
+        try:
+            ids.update(pd.read_parquet(f, columns=["trip_id"])["trip_id"].astype(str))
+        except Exception as exc:
+            print(f"  [warn] couldn't read {f}: {exc}")
+    return ids
 
 
 def main() -> None:
@@ -41,20 +76,39 @@ def main() -> None:
     resp = requests.get(feeds.static_gtfs, timeout=REQUEST_TIMEOUT, headers=HTTP_HEADERS)
     resp.raise_for_status()
 
-    out_dir = Path(DATA_DIR) / "reference"
-    out_dir.mkdir(parents=True, exist_ok=True)
-
     with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
         available = set(zf.namelist())
+        tables: dict[str, pd.DataFrame] = {}
         for fname, table in WANTED.items():
             if fname not in available:
                 print(f"  [skip] {fname} not present in feed")
                 continue
             with zf.open(fname) as handle:
-                df = pd.read_csv(handle, dtype=str)
-            out_path = out_dir / f"{table}.parquet"
-            df.to_parquet(out_path, index=False)
-            print(f"  {table}: {len(df)} rows -> {out_path}")
+                tables[table] = pd.read_csv(handle, dtype=str)
+
+    live_ids = recent_realtime_trip_ids()
+    if live_ids and "trips" in tables:
+        new_ids = set(tables["trips"]["trip_id"].astype(str))
+        overlap = len(live_ids & new_ids) / len(live_ids)
+        if overlap < MIN_OVERLAP_FRACTION:
+            print(
+                f"::warning::New static GTFS shares only {overlap:.1%} of trip_ids with vehicles "
+                "currently on the road (checked against the last "
+                f"{len(live_ids)} realtime trip_ids). This looks like a not-yet-effective "
+                "schedule published ahead of its start date, not a real update. Keeping the "
+                "existing reference tables and skipping this refresh."
+            )
+            return
+        print(f"  overlap check passed: {overlap:.1%} of recent realtime trip_ids found in new schedule.")
+    elif not live_ids:
+        print("  [info] no realtime history to validate against yet; accepting schedule as-is.")
+
+    out_dir = Path(DATA_DIR) / "reference"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for table, df in tables.items():
+        out_path = out_dir / f"{table}.parquet"
+        df.to_parquet(out_path, index=False)
+        print(f"  {table}: {len(df)} rows -> {out_path}")
     print("static GTFS refresh complete.")
 
 

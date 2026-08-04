@@ -57,4 +57,13 @@ jobs:
           done
           git add data
           git commit -m "ingest: $(date -u +%FT%TZ) [skip ci]" || { echo "no changes"; exit 0; }
-          git push origin HEAD:data
+          # The branch can move under us (another writer, e.g. a manual push) during this job's
+          # long snapshot loop; retry with a rebase instead of losing the run's data outright.
+          for i in 1 2 3; do
+            if git push origin HEAD:data; then exit 0; fi
+            echo "push rejected (attempt $i/3), rebasing onto latest data branch and retrying..."
+            git fetch origin data
+            git rebase origin/data
+          done
+          echo "::error::failed to push to data branch after 3 attempts"
+          exit 1

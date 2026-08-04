@@ -44,4 +44,13 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/reference
           git commit -m "static-gtfs refresh: $(date -u +%F) [skip ci]" || { echo "no changes"; exit 0; }
-          git push origin HEAD:data
+          # The branch can move under us (e.g. a concurrent ingest push); retry with a rebase
+          # instead of failing the whole refresh outright.
+          for i in 1 2 3; do
+            if git push origin HEAD:data; then exit 0; fi
+            echo "push rejected (attempt $i/3), rebasing onto latest data branch and retrying..."
+            git fetch origin data
+            git rebase origin/data
+          done
+          echo "::error::failed to push to data branch after 3 attempts"
+          exit 1

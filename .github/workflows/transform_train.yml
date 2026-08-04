@@ -70,4 +70,12 @@ jobs:
           git config user.email "cfyost05@gmail.com"
           git add ml/artifacts/model.pkl ml/artifacts/metrics.json
           git commit -m "retrain: $(date -u +%FT%TZ) [skip ci]" || { echo "no changes"; exit 0; }
-          git push origin HEAD:main
+          # The branch can move under us (e.g. a manual push); retry with a rebase instead of
+          # losing a day's retrain outright.
+          for i in 1 2 3; do
+            if git push origin HEAD:main; then exit 0; fi
+            echo "push rejected (attempt $i/3), rebasing onto latest main and retrying..."
+            git pull --rebase origin main
+          done
+          echo "::error::failed to push to main after 3 attempts"
+          exit 1

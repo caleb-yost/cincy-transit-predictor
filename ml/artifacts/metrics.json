@@ -1,23 +1,23 @@
 {
-  "trained_at": "2026-08-18T10:04:01.393993+00:00",
-  "n_rows": 312663,
-  "n_service_days": 3,
+  "trained_at": "2026-08-19T10:04:31.092838+00:00",
+  "n_rows": 493349,
+  "n_service_days": 4,
   "n_distinct_hours": 24,
   "split": "time-based (insufficient days for walk-forward CV)",
-  "n_folds": 0,
+  "n_folds": 1,
   "fold_log": [],
   "is_smoke_model": false,
   "regression": {
-    "mae_minutes": 2.972,
-    "rmse_minutes": 4.08,
-    "r2": -0.204,
-    "baseline_mae_minutes": 2.858
+    "mae_minutes": 3.841,
+    "rmse_minutes": 5.496,
+    "r2": 0.109,
+    "baseline_mae_minutes": 3.739
   },
   "classification": {
-    "roc_auc": 0.703,
-    "accuracy": 0.822,
-    "precision": 0.403,
-    "recall": 0.139,
-    "late_rate": 0.184
+    "roc_auc": 0.72,
+    "accuracy": 0.751,
+    "precision": 0.536,
+    "recall": 0.207,
+    "late_rate": 0.202
   }
 }

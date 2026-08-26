@@ -11,6 +11,15 @@ completely (trip_ids don't overlap at all), so before committing a refresh we ch
 the new schedule's trip_ids actually appear in the vehicles currently on the road. If they
 don't, we skip the write and keep the schedule that's actually in effect.
 
+GTFS trip_ids are scoped to a schedule season (SORTA's look like "2608-...": the Aug 2026
+season), so once a season *legitimately* rolls over, its trip_ids stop existing in any new
+schedule pull. fct_arrivals inner-joins realtime predictions to trips/stop_times by trip_id,
+so `trips` and `stop_times` accumulate across refreshes (union + dedupe, latest wins on a
+key conflict) instead of being overwritten -- otherwise every rollover permanently orphans
+all prior realtime history from the join, even though the raw data is still on disk. The
+other tables (routes/stops/calendar/calendar_dates) aren't part of that join and are fine
+as plain latest-wins snapshots.
+
 Run: ``python ingestion/fetch_static_gtfs.py`` (or ``python -m ingestion.fetch_static_gtfs``).
 Writes reference/<table>.parquet under ``DATA_DIR``.
 """
@@ -44,6 +53,12 @@ REQUEST_TIMEOUT = 120
 MIN_OVERLAP_FRACTION = 0.05  # if fewer than 5% of recently-seen realtime trip_ids are in the
 # new schedule, treat it as not-yet-effective rather than as a broken/changed feed.
 RECENT_SNAPSHOTS_TO_SAMPLE = 12
+# Tables the realtime<->schedule join depends on (trip_id, or trip_id+stop_id+stop_sequence):
+# accumulate across refreshes instead of overwriting, keyed by their natural key.
+ACCUMULATE_KEYS = {
+    "trips": ["trip_id"],
+    "stop_times": ["trip_id", "stop_id", "stop_sequence"],
+}
 
 
 def recent_realtime_trip_ids() -> set[str]:
@@ -107,6 +122,14 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     for table, df in tables.items():
         out_path = out_dir / f"{table}.parquet"
+        key = ACCUMULATE_KEYS.get(table)
+        if key and out_path.exists():
+            existing = pd.read_parquet(out_path)
+            before = len(existing)
+            # New rows win on a key conflict (a legitimate correction to an already-seen trip);
+            # rows whose key isn't in the new pull (a prior season) are carried forward as-is.
+            df = pd.concat([existing, df]).drop_duplicates(subset=key, keep="last")
+            print(f"  {table}: merged {before} existing + new rows -> {len(df)} total (accumulated)")
         df.to_parquet(out_path, index=False)
         print(f"  {table}: {len(df)} rows -> {out_path}")
     print("static GTFS refresh complete.")

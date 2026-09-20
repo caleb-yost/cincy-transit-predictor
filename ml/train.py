@@ -14,12 +14,11 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import joblib
 import numpy as np
-from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor
 from sklearn.metrics import (
     accuracy_score,
@@ -30,13 +29,10 @@ from sklearn.metrics import (
     recall_score,
     roc_auc_score,
 )
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder
 
 try:
     import warehouse
     from ml.build_features import (
-        CATEGORICAL,
         CLF_TARGET,
         FEATURES,
         REG_TARGET,
@@ -47,7 +43,6 @@ except ModuleNotFoundError:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     import warehouse
     from ml.build_features import (
-        CATEGORICAL,
         CLF_TARGET,
         FEATURES,
         REG_TARGET,
@@ -61,14 +56,24 @@ METRICS_PATH = ARTIFACT_DIR / "metrics.json"
 MIN_ROWS = 50
 MIN_TRAIN_DAYS = 3  # a fold's training window must span at least this many days before its test day
 MAX_FOLDS = 5  # cap walk-forward folds so runtime stays flat as months of data accrue
+# Bounds memory, not accuracy: at ~90K rows/day this pins training at roughly today's already
+# GitHub Actions-safe size (verified ~6.8GB peak at 7.9M rows, native-categorical encoding) no
+# matter how much history accumulates, instead of growing unbounded until it OOMs again. A
+# narrower 30-day window was tested and rejected on accuracy grounds back at the 39-day mark
+# (see git history); 90 days is generous enough that it won't start trimming anything for
+# another ~4 weeks, and only ever trims the tail once it does.
+TRAINING_WINDOW_DAYS = 90
 
 
-def build_pipeline(estimator) -> Pipeline:
-    pre = ColumnTransformer(
-        [("cat", OneHotEncoder(handle_unknown="ignore", sparse_output=False), CATEGORICAL)],
-        remainder="passthrough",
-    )
-    return Pipeline([("pre", pre), ("model", estimator)])
+def new_regressor() -> HistGradientBoostingRegressor:
+    # categorical_features="from_dtype" reads route_id/sched_dow's pandas category dtype
+    # directly instead of a one-hot expansion -- see build_features.prepare() for why (at a
+    # few million rows, dense one-hot was the single biggest memory cost in the pipeline).
+    return HistGradientBoostingRegressor(max_iter=300, learning_rate=0.06, categorical_features="from_dtype")
+
+
+def new_classifier() -> HistGradientBoostingClassifier:
+    return HistGradientBoostingClassifier(max_iter=300, learning_rate=0.06, categorical_features="from_dtype")
 
 
 def time_split(df, frac: float = 0.8):
@@ -97,6 +102,15 @@ def main() -> None:
             "static GTFS schedule), not a training bug. Check trip_id overlap between "
             "stg_trip_updates and stg_stop_times before touching this script."
         )
+
+    max_date = df["start_date"].max()
+    cutoff = (datetime.strptime(max_date, "%Y%m%d") - timedelta(days=TRAINING_WINDOW_DAYS)).strftime("%Y%m%d")
+    dropped = int((df["start_date"] < cutoff).sum())
+    if dropped:
+        print(f"trimming to the last {TRAINING_WINDOW_DAYS} days (cutoff={cutoff}): dropping {dropped} older rows")
+    df = df[df["start_date"] >= cutoff]
+    n = len(df)
+
     n_days = int(df["start_date"].nunique()) if "start_date" in df.columns else 1
     n_hours = int(df["sched_hour"].nunique())
     print(f"labeled rows: {n}  |  service days: {n_days}  |  distinct hours: {n_hours}")
@@ -117,14 +131,14 @@ def main() -> None:
         for train_df, test_df, test_day in folds:
             x_tr, x_te = train_df[FEATURES], test_df[FEATURES]
 
-            reg = build_pipeline(HistGradientBoostingRegressor(max_iter=300, learning_rate=0.06))
+            reg = new_regressor()
             reg.fit(x_tr, train_df[REG_TARGET])
             reg_true.extend(test_df[REG_TARGET].tolist())
             reg_pred.extend(reg.predict(x_te).tolist())
             reg_baseline_pred.extend([train_df[REG_TARGET].mean()] * len(test_df))
 
             if train_df[CLF_TARGET].nunique() > 1 and test_df[CLF_TARGET].nunique() > 1:
-                clf = build_pipeline(HistGradientBoostingClassifier(max_iter=300, learning_rate=0.06))
+                clf = new_classifier()
                 clf.fit(x_tr, train_df[CLF_TARGET])
                 clf_true.extend(test_df[CLF_TARGET].tolist())
                 clf_proba.extend(clf.predict_proba(x_te)[:, 1].tolist())
@@ -145,14 +159,14 @@ def main() -> None:
         print(f"split: {split}  |  train={len(train_df)} test={len(test_df)}")
 
         x_tr, x_te = train_df[FEATURES], test_df[FEATURES]
-        reg = build_pipeline(HistGradientBoostingRegressor(max_iter=300, learning_rate=0.06))
+        reg = new_regressor()
         reg.fit(x_tr, train_df[REG_TARGET])
         reg_true = test_df[REG_TARGET].tolist()
         reg_pred = reg.predict(x_te).tolist()
         reg_baseline_pred = [train_df[REG_TARGET].mean()] * len(test_df)
 
         if train_df[CLF_TARGET].nunique() > 1 and test_df[CLF_TARGET].nunique() > 1:
-            clf = build_pipeline(HistGradientBoostingClassifier(max_iter=300, learning_rate=0.06))
+            clf = new_classifier()
             clf.fit(x_tr, train_df[CLF_TARGET])
             clf_true = test_df[CLF_TARGET].tolist()
             clf_proba = clf.predict_proba(x_te)[:, 1].tolist()
@@ -190,11 +204,11 @@ def main() -> None:
     # Reported metrics come from held-out folds above; the SHIPPED model is refit on every row
     # collected so far, since there's no reason to throw away data once it's no longer being tested.
     x_all = df[FEATURES]
-    reg = build_pipeline(HistGradientBoostingRegressor(max_iter=300, learning_rate=0.06))
+    reg = new_regressor()
     reg.fit(x_all, df[REG_TARGET])
     clf = None
     if df[CLF_TARGET].nunique() > 1:
-        clf = build_pipeline(HistGradientBoostingClassifier(max_iter=300, learning_rate=0.06))
+        clf = new_classifier()
         clf.fit(x_all, df[CLF_TARGET])
 
     joblib.dump(

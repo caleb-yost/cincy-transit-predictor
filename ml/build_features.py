@@ -33,8 +33,15 @@ WEATHER_DEFAULTS = {
 
 
 def load_labeled_frame(con) -> pd.DataFrame:
-    """Pull the labeled stop-arrival table from the warehouse."""
-    return con.sql("select * from mart_stop_delays").df()
+    """Pull only the columns training actually needs from the warehouse.
+
+    ``select *`` was pulling every column, including several string/hash/timestamp ones
+    (stop_delay_key, trip_id, vehicle_id, scheduled_at, predicted_at, weather_code) that
+    training never touches. At a few million rows those add gigabytes of dead weight before
+    the model even starts fitting.
+    """
+    cols = [*FEATURES, REG_TARGET, CLF_TARGET, "start_date"]
+    return con.sql(f"select {', '.join(cols)} from mart_stop_delays").df()
 
 
 def prepare(df: pd.DataFrame) -> pd.DataFrame:
@@ -62,6 +69,15 @@ def prepare(df: pd.DataFrame) -> pd.DataFrame:
     df = df.dropna(subset=[REG_TARGET])
     # buses are never realistically >1h off; clip the long tail of feed noise
     df = df[df[REG_TARGET].between(-30, 60)]
+
+    # HistGradientBoosting's native categorical support (categorical_features="from_dtype")
+    # reads this dtype directly, so the model consumes route_id/sched_dow as compact integer
+    # codes instead of a one-hot expansion. At a few million rows, dense one-hot for ~60 dummy
+    # columns was the single biggest memory cost in the whole pipeline (see git history:
+    # 19GB locally at 7.9M rows, well past GitHub Actions' 7GB runner and the actual cause of
+    # the daily transform-train OOM failures starting ~2026-09-17).
+    for col in CATEGORICAL:
+        df[col] = df[col].astype("category")
     return df
 
 
@@ -92,4 +108,10 @@ def make_feature_row(
         "wind_speed_mph": weather["wind_speed_mph"],
         "route_recent_avg_delay": float(route_recent_avg_delay),
     }
-    return pd.DataFrame([row])[FEATURES]
+    out = pd.DataFrame([row])[FEATURES]
+    # Must match training's dtype so the fitted model's categorical_features="from_dtype"
+    # recognizes these columns; the model matches on category VALUES seen during training; a
+    # single-row frame's own (trivial, one-value) category set doesn't need to match that.
+    for col in CATEGORICAL:
+        out[col] = out[col].astype("category")
+    return out

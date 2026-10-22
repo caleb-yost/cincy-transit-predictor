@@ -1,49 +1,49 @@
 {
-  "trained_at": "2026-10-21T14:51:52.002937+00:00",
-  "n_rows": 5777817,
+  "trained_at": "2026-10-22T14:51:42.864496+00:00",
+  "n_rows": 5734532,
   "n_service_days": 62,
   "n_distinct_hours": 24,
   "split": "rolling-origin walk-forward CV (5 folds, pooled)",
   "n_folds": 5,
   "fold_log": [
     {
-      "test_day": "20261017",
-      "train_rows": 5388667,
-      "test_rows": 93315
-    },
-    {
       "test_day": "20261018",
-      "train_rows": 5481982,
+      "train_rows": 5351015,
       "test_rows": 91743
     },
     {
       "test_day": "20261019",
-      "train_rows": 5573725,
+      "train_rows": 5442758,
       "test_rows": 79351
     },
     {
       "test_day": "20261020",
-      "train_rows": 5653076,
+      "train_rows": 5522109,
       "test_rows": 98547
     },
     {
       "test_day": "20261021",
-      "train_rows": 5751623,
-      "test_rows": 26194
+      "train_rows": 5620656,
+      "test_rows": 87660
+    },
+    {
+      "test_day": "20261022",
+      "train_rows": 5708316,
+      "test_rows": 26216
     }
   ],
   "is_smoke_model": false,
   "regression": {
-    "mae_minutes": 2.493,
-    "rmse_minutes": 3.648,
-    "r2": 0.17,
-    "baseline_mae_minutes": 2.921
+    "mae_minutes": 2.462,
+    "rmse_minutes": 3.69,
+    "r2": 0.219,
+    "baseline_mae_minutes": 2.958
   },
   "classification": {
-    "roc_auc": 0.77,
-    "accuracy": 0.855,
-    "precision": 0.562,
-    "recall": 0.106,
-    "late_rate": 0.177
+    "roc_auc": 0.782,
+    "accuracy": 0.863,
+    "precision": 0.589,
+    "recall": 0.128,
+    "late_rate": 0.175
   }
 }
